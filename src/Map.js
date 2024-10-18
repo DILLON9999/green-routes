@@ -173,7 +173,6 @@ const MapComponent = () => {
 
   const generateParkGuide = async (park) => {
     const parkInfo = park.properties;
-    const [longitude, latitude] = center(park).geometry.coordinates;
     const prompt = `Create a fun, user-readable guide about the following park (3-4 sentences):
     ${parkInfo.full_name || parkInfo.common_name} is a ${parkInfo.acres.toFixed(2)}-acre ${parkInfo.desig_use} located in ${parkInfo.community}. 
     Facilities: ${Object.entries(parkInfo)
