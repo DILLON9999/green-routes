@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Map, { Source, Layer, Marker, Popup, useMap } from 'react-map-gl';
 import axios from 'axios';
-import { bbox, squareGrid, center, nearestPoint, distance, featureCollection, dissolve, point, buffer, booleanPointInPolygon } from '@turf/turf';
+import { bbox, squareGrid, center, nearestPoint, distance, featureCollection, dissolve, point, buffer, booleanPointInPolygon, lineString, lineIntersect } from '@turf/turf';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import bikePathsData from './geo_data/bike_routes_datasd.geojson';
 
@@ -163,7 +163,23 @@ const MapComponent = () => {
   const [selectedPark, setSelectedPark] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [healthyPlan, setHealthyPlan] = useState(null);
-  // const [parkGuide, setParkGuide] = useState(null);
+
+  const [highlightedTrail, setHighlightedTrail] = useState(null);
+  const [bikePathsContent, setBikePathsContent] = useState(null);
+
+  useEffect(() => {
+    const fetchBikePathsData = async () => {
+      try {
+        const response = await fetch('/bike_routes_datasd.geojson');
+        const data = await response.json();
+        setBikePathsContent(data);
+      } catch (error) {
+        console.error('Error fetching bike paths data:', error);
+      }
+    };
+
+    fetchBikePathsData();
+  }, []);
 
   const isWithinSanDiego = useCallback(([lon, lat]) => {
     return lon >= SD_BOUNDS[0] && lon <= SD_BOUNDS[2] &&
@@ -385,20 +401,243 @@ const MapComponent = () => {
   }, [getUserLocation]);
 
   const findBestEnvironmentalParcel = useCallback(() => {
-    if (!userLocation || !environmentalData) return null;
-
+    if (!userLocation || !environmentalData || !parks) return null;
+  
     const userPoint = point(userLocation);
     const buffer2Miles = buffer(userPoint, 2, { units: 'miles' });
-
-    const parcelsInRange = environmentalData.features.filter(feature => 
-      booleanPointInPolygon(center(feature), buffer2Miles)
+  
+    const parcelsInRange = environmentalData.features
+      .filter(feature => booleanPointInPolygon(center(feature), buffer2Miles))
+      .sort((a, b) => b.properties.percentile - a.properties.percentile);
+  
+    for (const parcel of parcelsInRange) {
+      const parksInParcel = parks.features.filter(park => 
+        booleanPointInPolygon(center(park), parcel)
+      );
+  
+      if (parksInParcel.length > 0) {
+        return parcel;
+      }
+    }
+  
+    return null;
+  }, [userLocation, environmentalData, parks]);
+  
+  const findBiggestPark = (parcel, parks) => {
+    if (!parks) return null;
+  
+    const parksInParcel = parks.features.filter(park => 
+      booleanPointInPolygon(center(park), parcel)
     );
+  
+    if (parksInParcel.length > 0) {
+      return parksInParcel.reduce((biggest, current) => 
+        (current.properties.acres > biggest.properties.acres) ? current : biggest
+      );
+    }
+  
+    return null;
+  };
 
-    return parcelsInRange.reduce((best, current) => 
-      (current.properties.percentile > best.properties.percentile) ? current : best
+  const findBestParkAcrossParcels = useCallback(() => {
+    if (!userLocation || !environmentalData || !parks) return null;
+  
+    const userPoint = point(userLocation);
+    const buffer2Miles = buffer(userPoint, 2, { units: 'miles' });
+  
+    const parcelsInRange = environmentalData.features
+      .filter(feature => booleanPointInPolygon(center(feature), buffer2Miles))
+      .sort((a, b) => b.properties.percentile - a.properties.percentile);
+  
+    for (const parcel of parcelsInRange) {
+      const bestParkInParcel = findBiggestPark(parcel, parks);
+      if (bestParkInParcel) {
+        return {
+          park: bestParkInParcel,
+          environmentalRating: parcel.properties.percentile
+        };
+      }
+    }
+  
+    return null;
+  }, [userLocation, environmentalData, parks]);  
+    
+  const getCoordinates = useCallback((feature) => {
+    if (feature.geometry.type === 'LineString') {
+      return feature.geometry.coordinates;
+    } else if (feature.geometry.type === 'MultiLineString') {
+      return feature.geometry.coordinates.flat();
+    } else {
+      console.error('Unexpected geometry type:', feature.geometry.type);
+      return [];
+    }
+  }, []);
+
+  const findNearestTrail = useCallback((start, end) => {
+    if (!bikePathsContent || !bikePathsContent.features) return null;
+
+    let nearestTrail = null;
+    let minDistance = Infinity;
+
+    console.log('start - end')
+    console.log(start)
+    console.log(end)
+
+    const startPoint = point(start);
+    const endPoint = point(end);
+
+    bikePathsContent.features.forEach(trail => {
+      const coordinates = trail.geometry.coordinates;
+      const trailStart = coordinates[0];
+      const trailEnd = coordinates[coordinates.length - 1];
+
+              // Handle case where trailEnd is an array of coordinates
+              const trailEndCoord = Array.isArray(trailEnd[0]) ? trailEnd[trailEnd.length - 1] : trailEnd;
+              const trailStartCoord = Array.isArray(trailStart[0]) ? trailStart[trailStart.length - 1] : trailStart;
+
+
+      console.log('trail start - end')
+      console.log(trailStartCoord)
+      console.log(trailEndCoord)
+
+      const trailStartPoint = point(trailStartCoord);
+      const trailEndPoint = point(trailEndCoord);
+
+      const distanceToStart = distance(startPoint, trailStartPoint);
+      const distanceToEnd = distance(endPoint, trailEndPoint);
+      const totalDistance = distanceToStart + distanceToEnd;
+
+      if (totalDistance < minDistance) {
+        minDistance = totalDistance;
+        nearestTrail = trail;
+      }
+    });
+
+    return nearestTrail;
+  }, [bikePathsContent]);
+
+  const ensurePoint = (coord) => {
+    if (coord.type === 'Feature' && coord.geometry.type === 'Point') {
+      return coord;
+    } else if (Array.isArray(coord) && coord.length === 2) {
+      return point(coord);
+    } else {
+      console.error('Invalid coordinate', coord);
+      return null;
+    }
+  };
+
+  const highlightTrail = useCallback((trail, start, end) => {
+    try {
+      console.log('Trail:', JSON.stringify(trail));
+      console.log('Start:', JSON.stringify(start));
+      console.log('End:', JSON.stringify(end));
+
+      // Ensure trail is a valid GeoJSON LineString
+      if (trail.type !== 'Feature' || trail.geometry.type !== 'LineString') {
+        console.error('Invalid trail object', trail);
+        return null;
+      }
+
+      const coordinates = trail.geometry.coordinates;
+      if (coordinates.length < 2) {
+        console.error('Not enough coordinates in the trail');
+        return null;
+      }
+
+      // Ensure start and end are valid GeoJSON Point features
+      const startPoint = ensurePoint(start);
+      const endPoint = ensurePoint(end);
+
+      if (!startPoint || !endPoint) {
+        console.error('Invalid start or end point');
+        return null;
+      }
+
+      console.log('StartPoint:', JSON.stringify(startPoint));
+      console.log('EndPoint:', JSON.stringify(endPoint));
+
+      // Create a FeatureCollection of points from the trail coordinates
+      const pointsCollection = featureCollection(
+        coordinates.map(coord => point(coord))
+      );
+
+      const nearestStartPoint = nearestPoint(startPoint, pointsCollection);
+      const nearestEndPoint = nearestPoint(endPoint, pointsCollection);
+
+      console.log('NearestStartPoint:', JSON.stringify(nearestStartPoint));
+      console.log('NearestEndPoint:', JSON.stringify(nearestEndPoint));
+
+      if (!nearestStartPoint || !nearestEndPoint) {
+        console.error('Could not find nearest points on the trail');
+        return null;
+      }
+
+      const startIndex = coordinates.findIndex(coord => 
+        coord[0] === nearestStartPoint.geometry.coordinates[0] && 
+        coord[1] === nearestStartPoint.geometry.coordinates[1]
+      );
+      const endIndex = coordinates.findIndex(coord => 
+        coord[0] === nearestEndPoint.geometry.coordinates[0] && 
+        coord[1] === nearestEndPoint.geometry.coordinates[1]
+      );
+
+      if (startIndex === -1 || endIndex === -1) {
+        console.error('Could not find start or end index in coordinates');
+        return null;
+      }
+
+      const slicedCoordinates = coordinates.slice(
+        Math.min(startIndex, endIndex),
+        Math.max(startIndex, endIndex) + 1
+      );
+
+      return {
+        type: 'Feature',
+        properties: { ...trail.properties, highlighted: true },
+        geometry: {
+          type: 'LineString',
+          coordinates: slicedCoordinates
+        }
+      };
+    } catch (error) {
+      console.error('Error in highlightTrail:', error);
+      return null;
+    }
+  }, []);
+
+  const findBestParkInParcel = (parcel, parks) => {
+    if (!parks) return null;
+  
+    const parksInParcel = parks.features.filter(park => 
+      booleanPointInPolygon(center(park), parcel)
     );
-  }, [userLocation, environmentalData]);
-
+  
+    if (parksInParcel.length > 0) {
+      return parksInParcel.reduce((biggest, current) => 
+        (current.properties.acres > biggest.properties.acres) ? current : biggest
+      );
+    }
+  
+    return null;
+  };
+  
+  const findBestEnvironmentalParcelWithPark = (userLocation, environmentalData, parks) => {
+    if (!userLocation || !environmentalData || !parks) return null;
+  
+    const sortedParcels = environmentalData.features.sort((a, b) => 
+      b.properties.percentile - a.properties.percentile
+    );
+  
+    for (const parcel of sortedParcels) {
+      const bestPark = findBestParkInParcel(parcel, parks);
+      if (bestPark) {
+        return { parcel, park: bestPark };
+      }
+    }
+  
+    return null;
+  };  
   const findBiggestParkOrTrail = useCallback((parcel) => {
     if (!parks || !bikePaths) return null;
 
@@ -412,6 +651,8 @@ const MapComponent = () => {
       );
     }
 
+    console.log('no parks')
+
     // If no parks, find a trail
     const trailsInParcel = bikePaths.features.filter(trail => 
       booleanPointInPolygon(center(trail), parcel)
@@ -420,12 +661,24 @@ const MapComponent = () => {
     return trailsInParcel.length > 0 ? trailsInParcel[0] : null;
   }, [parks, bikePaths]);
 
+
   const buildHealthyPlan = useCallback(async () => {
     const bestParcel = findBestEnvironmentalParcel();
     if (bestParcel) {
       const bestLocation = findBiggestParkOrTrail(bestParcel);
       if (bestLocation) {
         const guide = await generateParkGuide(bestLocation);
+        
+        // Find and highlight the nearest trail
+        if (userLocation && bikePathsContent) {
+          const parkCenter = center(bestLocation).geometry.coordinates;
+          const nearestTrail = findNearestTrail(userLocation, parkCenter);
+          if (nearestTrail) {
+            const highlightedTrailFeature = highlightTrail(nearestTrail, userLocation, parkCenter);
+            setHighlightedTrail(highlightedTrailFeature);
+          }
+        }
+
         setHealthyPlan({
           type: bestLocation.geometry.type === 'Polygon' ? 'Park' : 'Trail',
           location: bestLocation,
@@ -444,7 +697,7 @@ const MapComponent = () => {
         }
       }
     }
-  }, [findBestEnvironmentalParcel, findBiggestParkOrTrail, map]);
+  }, [findBestEnvironmentalParcel, generateParkGuide, userLocation, bikePathsContent, findNearestTrail, highlightTrail, map]);
 
   const environmentalDataLayer = {
     id: 'environmental-data',
@@ -493,6 +746,16 @@ const MapComponent = () => {
       'fill-opacity': 0.7,
       'fill-outline-color': 'limegreen',
       'fill-outline-width': 2
+    }
+  };
+
+  const highlightedTrailLayer = {
+    id: 'highlighted-trail',
+    type: 'line',
+    paint: {
+      'line-color': 'red',
+      'line-width': 6,
+      'line-opacity': 1
     }
   };
 
@@ -610,6 +873,12 @@ const MapComponent = () => {
               {healthyPlan.type === 'Trail' && (
                 <p><strong>Trail Name:</strong> {healthyPlan.location.properties.name || 'Unnamed Trail'}</p>
               )}
+              {highlightedTrail && (
+                <Source type="geojson" data={highlightedTrail}>
+                  <Layer {...highlightedTrailLayer} />
+                </Source>
+              )}
+
             </div>
           </Popup>
         )}
