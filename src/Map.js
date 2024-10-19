@@ -210,10 +210,6 @@ const MapComponent = () => {
     let nearestTrail = null;
     let minDistance = Infinity;
 
-    console.log('start - end')
-    console.log(start)
-    console.log(end)
-
     const startPoint = point(start);
     const endPoint = point(end);
 
@@ -225,11 +221,6 @@ const MapComponent = () => {
               // Handle case where trailEnd is an array of coordinates
               const trailEndCoord = Array.isArray(trailEnd[0]) ? trailEnd[trailEnd.length - 1] : trailEnd;
               const trailStartCoord = Array.isArray(trailStart[0]) ? trailStart[trailStart.length - 1] : trailStart;
-
-
-      console.log('trail start - end')
-      console.log(trailStartCoord)
-      console.log(trailEndCoord)
 
       const trailStartPoint = point(trailStartCoord);
       const trailEndPoint = point(trailEndCoord);
@@ -260,10 +251,6 @@ const MapComponent = () => {
 
   const highlightTrail = useCallback((trail, start, end) => {
     try {
-      console.log('Trail:', JSON.stringify(trail));
-      console.log('Start:', JSON.stringify(start));
-      console.log('End:', JSON.stringify(end));
-
       // Ensure trail is a valid GeoJSON LineString
       if (trail.type !== 'Feature' || trail.geometry.type !== 'LineString') {
         console.error('Invalid trail object', trail);
@@ -285,9 +272,6 @@ const MapComponent = () => {
         return null;
       }
 
-      console.log('StartPoint:', JSON.stringify(startPoint));
-      console.log('EndPoint:', JSON.stringify(endPoint));
-
       // Create a FeatureCollection of points from the trail coordinates
       const pointsCollection = featureCollection(
         coordinates.map(coord => point(coord))
@@ -295,9 +279,6 @@ const MapComponent = () => {
 
       const nearestStartPoint = nearestPoint(startPoint, pointsCollection);
       const nearestEndPoint = nearestPoint(endPoint, pointsCollection);
-
-      console.log('NearestStartPoint:', JSON.stringify(nearestStartPoint));
-      console.log('NearestEndPoint:', JSON.stringify(nearestEndPoint));
 
       if (!nearestStartPoint || !nearestEndPoint) {
         console.error('Could not find nearest points on the trail');
@@ -350,8 +331,6 @@ const MapComponent = () => {
       );
     }
 
-    console.log('no parks')
-
     // If no parks, find a trail
     const trailsInParcel = bikePaths.features.filter(trail => 
       booleanPointInPolygon(center(trail), parcel)
@@ -385,11 +364,38 @@ const MapComponent = () => {
           guide: guide,
         });
 
-        // Set the selected park ID
-        if (bestLocation.properties.OBJECTID) {
-          setSelectedParkId(bestLocation.properties.OBJECTID);
-        }
+        console.log('selected park')
 
+        // Set the selected park ID
+        if (bestLocation && parks) {
+          // Use common_name as the unique identifier for the park
+          const parkId = bestLocation.properties.common_name;
+        
+          if (parkId) {
+            setSelectedParkId(parkId);
+        
+            console.log('Selected park');
+            console.log(parkId);
+        
+            // Update the parks data to include the 'selected' property
+            const updatedParks = {
+              ...parks,
+              features: parks.features.map(park => ({
+                ...park,
+                properties: {
+                  ...park.properties,
+                  selected: park.properties.common_name === parkId // Use common_name for selection
+                }
+              }))
+            };
+        
+            // Update the parks data to trigger re-render
+            setParks(updatedParks);
+          } else {
+            console.error('No valid common_name for the selected park');
+          }
+        }
+          
         // Pan to the recommended location
         const [longitude, latitude] = center(bestLocation).geometry.coordinates;
         if (map) {
@@ -401,7 +407,7 @@ const MapComponent = () => {
         }
       }
     }
-  }, [findBestEnvironmentalParcel, generateParkGuide, userLocation, bikePathsContent, findNearestTrail, highlightTrail, map, findBiggestParkOrTrail]);
+  }, [findBestEnvironmentalParcel, generateParkGuide, userLocation, bikePathsContent, findNearestTrail, highlightTrail, map, findBiggestParkOrTrail, parks]);
 
   const environmentalDataLayer = {
     id: 'environmental-data',
@@ -439,15 +445,15 @@ const MapComponent = () => {
     paint: {
       'fill-color': [
         'case',
-        ['==', ['get', 'OBJECTID'], ['to-number', selectedParkId]],
-        'red',
-        'darkgreen'
+        ['==', ['get', 'common_name'], selectedParkId], // Compare common_name instead of OBJECTID
+        'red', // Highlight selected park in red
+        'darkgreen' // Default color for unselected parks
       ],
       'fill-opacity': 0.7,
-      'fill-outline-color': 'limegreen',
-      'fill-outline-width': 2
+      'fill-outline-color': 'limegreen'
     }
   };
+      
 
   const highlightedTrailLayer = {
     id: 'highlighted-trail',
@@ -480,7 +486,7 @@ const MapComponent = () => {
           </Source>
         )}
         {parks && (
-          <Source type="geojson" data={parks}>
+          <Source key={selectedParkId} type="geojson" data={parks}>
             <Layer {...parksLayer} />
           </Source>
         )}
