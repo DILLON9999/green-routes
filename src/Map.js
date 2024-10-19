@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import Map, { Source, Layer, Marker, Popup, useMap } from 'react-map-gl';
+import Map, { Source, Layer, Marker, useMap } from 'react-map-gl';
 import axios from 'axios';
-import { bbox, squareGrid, center, nearestPoint, distance, featureCollection, dissolve, point, buffer, booleanPointInPolygon, lineString, lineIntersect } from '@turf/turf';
+import { center, nearestPoint, distance, featureCollection, point, buffer, booleanPointInPolygon } from '@turf/turf';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import bikePathsData from './geo_data/bike_routes_datasd.geojson';
 
@@ -11,161 +11,22 @@ const CHATGPT_API_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 const MAPBOX_TOKEN = process.env.REACT_APP_MAPBOX_TOKEN;
 const CHATGPT_API_KEY = process.env.REACT_APP_CHATGPT_API_KEY;
 
-
-const Legend = ({ layerVisibility, toggleLayer }) => {
-  return (
-    <div style={{
-      position: 'absolute',
-      top: '10px',
-      right: '10px',
-      backgroundColor: 'white',
-      padding: '10px',
-      borderRadius: '5px',
-      zIndex: 1
-    }}>
-      <h3>Legend</h3>
-      <div>
-        <button 
-          onClick={() => toggleLayer('environmental')}
-          style={{ backgroundColor: layerVisibility.environmental ? 'green' : 'red' }}
-        >
-          Environmental Factors
-        </button>
-      </div>
-      <div>
-        <button 
-          onClick={() => toggleLayer('healthcare')}
-          style={{ backgroundColor: layerVisibility.healthcare ? 'green' : 'red' }}
-        >
-          Healthcare Facilities & Access
-        </button>
-      </div>
-      <div>
-        <button 
-          onClick={() => toggleLayer('bikePaths')}
-          style={{ backgroundColor: layerVisibility.bikePaths ? 'green' : 'red' }}
-        >
-          Bike Paths and Parks
-        </button>
-      </div>
-      <div style={{ marginTop: '10px' }}>
-        <div>Environmental Factors:</div>
-        <div style={{ 
-          background: 'linear-gradient(to right, #8b0000, #ff0000, #0000ff, #00008b)', 
-          height: '20px', 
-          width: '100%', 
-          marginTop: '5px' 
-        }}></div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Worst</span>
-          <span>Best</span>
-        </div>
-      </div>
-      <div>
-        <div>Healthcare Access:</div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ color: 'red' }}>Low</span>
-          <span style={{ color: 'yellow' }}>Medium</span>
-        </div>
-      </div>
-      <div>
-        <div>Healthcare Facilities:</div>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 21h18v-2H3v2zm0-4h18v-2H3v2zm0-4h18v-2H3v2zm0-4h18V7H3v2zm0-6v2h18V3H3z" fill="#1e90ff"/>
-          </svg>
-          <span style={{ marginLeft: '5px' }}>Facility</span>
-        </div>
-      </div>
-      <div>
-        <div>Bike Paths and Parks:</div>
-        <div style={{ backgroundColor: 'darkgreen', border: '1px solid black', width: '20px', height: '5px' }}></div>
-      </div>
-    </div>
-  );
-};
-
-const ParkPopup = ({ park, onClose }) => {
-  const {
-    full_name,
-    common_name,
-    address_lo,
-    community,
-    acres,
-    desig_use,
-    tennis,
-    basketball,
-    playground,
-    baseball_90,
-    baseball_50_6,
-    softball,
-    sand_vball,
-    multi_purpose,
-    concession_stand,
-    comfort_station,
-    field_lighting,
-    recycled_water
-  } = park.properties;
-
-  const facilities = [
-    tennis && `Tennis courts: ${tennis}`,
-    basketball && `Basketball courts: ${basketball}`,
-    playground && 'Playground',
-    baseball_90 && `Baseball fields (90ft): ${baseball_90}`,
-    baseball_50_6 && `Baseball fields (50/60ft): ${baseball_50_6}`,
-    softball && `Softball fields: ${softball}`,
-    sand_vball && `Sand volleyball courts: ${sand_vball}`,
-    multi_purpose && `Multi-purpose fields: ${multi_purpose}`,
-    concession_stand && 'Concession stand',
-    comfort_station && 'Comfort station',
-    field_lighting === 'Y' && 'Field lighting',
-    recycled_water === 'Y' && 'Recycled water used'
-  ].filter(Boolean);
-
-  return (
-    <div style={{ maxWidth: '300px' }}>
-      <h3>{full_name || common_name}</h3>
-      <p>{address_lo}</p>
-      <p>Community: {community}</p>
-      <p>Size: {acres.toFixed(2)} acres</p>
-      <p>Type: {desig_use}</p>
-      {facilities.length > 0 && (
-        <>
-          <h4>Facilities:</h4>
-          <ul>
-            {facilities.map((facility, index) => (
-              <li key={index}>{facility}</li>
-            ))}
-          </ul>
-        </>
-      )}
-    </div>
-  );
-};
-
-
 const MapComponent = () => {
   const [viewport, setViewport] = useState({
     latitude: 32.7157,
     longitude: -117.1611,
     zoom: 10,
   });
-  const [healthcareFacilities, setHealthcareFacilities] = useState(null);
-  const [accessPolygons, setAccessPolygons] = useState(null);
   const [environmentalData, setEnvironmentalData] = useState(null);
   const [bikePaths, setBikePaths] = useState(null);
   const [parks, setParks] = useState(null);
-  const [layerVisibility, setLayerVisibility] = useState({
-    environmental: true,
-    healthcare: false,
-    bikePaths: true
-  });
-  const [selectedPark, setSelectedPark] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [healthyPlan, setHealthyPlan] = useState(null);
 
   const [highlightedTrail, setHighlightedTrail] = useState(null);
   const [bikePathsContent, setBikePathsContent] = useState(null);
+
+  const [selectedParkId, setSelectedParkId] = useState(null);
 
   useEffect(() => {
     const fetchBikePathsData = async () => {
@@ -186,8 +47,7 @@ const MapComponent = () => {
            lat >= SD_BOUNDS[1] && lat <= SD_BOUNDS[3];
   }, []);
 
-
-  const generateParkGuide = async (park) => {
+  const generateParkGuide = useCallback(async (park) => {
     const parkInfo = park.properties;
     const prompt = `Create a fun, user-readable guide about the following park (3-4 sentences):
     ${parkInfo.full_name || parkInfo.common_name} is a ${parkInfo.acres.toFixed(2)}-acre ${parkInfo.desig_use} located in ${parkInfo.community}. 
@@ -220,38 +80,8 @@ const MapComponent = () => {
       console.error('Error generating park guide:', error);
       return 'Sorry, we couldn\'t generate a guide for this park at the moment.';
     }
-  };
 
-  const fetchHealthcareFacilities = useCallback(async () => {
-    try {
-      const response = await axios.get('https://geo.sandag.org/server/rest/services/Hosted/Healthcare_Facilities/FeatureServer/0/query', {
-        params: {
-          where: '1=1',
-          outFields: '*',
-          outSR: '4326',
-          f: 'json'
-        }
-      });
-
-      const features = response.data.features
-        .map(feature => ({
-          type: 'Feature',
-          geometry: {
-            type: 'Point',
-            coordinates: [feature.geometry.x, feature.geometry.y]
-          },
-          properties: feature.attributes
-        }))
-        .filter(feature => isWithinSanDiego(feature.geometry.coordinates));
-
-      setHealthcareFacilities({
-        type: 'FeatureCollection',
-        features: features
-      });
-    } catch (error) {
-      console.error('Error fetching healthcare facilities', error);
-    }
-  }, [isWithinSanDiego]);
+  }, []);
 
   const fetchEnvironmentalData = useCallback(async () => {
     try {
@@ -317,61 +147,12 @@ const MapComponent = () => {
     }
   }, [isWithinSanDiego]);
 
-  const generateAccessPolygons = useCallback(() => {
-    if (!healthcareFacilities) return;
-
-    const boundingBox = bbox(healthcareFacilities);
-    const cellSide = 0.5; // approx. 0.5 km
-    const options = { units: 'kilometers' };
-    const grid = squareGrid(boundingBox, cellSide, options);
-
-    const redPolygons = [];
-    const yellowPolygons = [];
-
-    grid.features.forEach(cell => {
-      const cellCenter = center(cell);
-      const nearestFacility = nearestPoint(cellCenter, healthcareFacilities);
-      const distanceToNearest = distance(cellCenter, nearestFacility, options);
-
-      if (distanceToNearest > 5) {
-        redPolygons.push(cell);
-      } else if (distanceToNearest > 3) {
-        yellowPolygons.push(cell);
-      }
-    });
-
-    // Merge individual polygons
-    const mergedRed = dissolve(featureCollection(redPolygons));
-    const mergedYellow = dissolve(featureCollection(yellowPolygons));
-
-    setAccessPolygons({
-      type: 'FeatureCollection',
-      features: [
-        ...mergedRed.features.map(f => ({ ...f, properties: { color: 'red' } })),
-        ...mergedYellow.features.map(f => ({ ...f, properties: { color: 'yellow' } }))
-      ]
-    });
-  }, [healthcareFacilities]);
 
   useEffect(() => {
-    fetchHealthcareFacilities();
     fetchEnvironmentalData();
     loadBikePaths();
     fetchParks();
-  }, [fetchHealthcareFacilities, fetchEnvironmentalData, loadBikePaths, fetchParks]);
-
-  useEffect(() => {
-    if (healthcareFacilities) {
-      generateAccessPolygons();
-    }
-  }, [healthcareFacilities, generateAccessPolygons]);
-
-  const toggleLayer = (layerName) => {
-    setLayerVisibility(prev => ({
-      ...prev,
-      [layerName]: !prev[layerName]
-    }));
-  };
+  }, [fetchEnvironmentalData, loadBikePaths, fetchParks]);
 
   const { current: map } = useMap();
 
@@ -422,56 +203,6 @@ const MapComponent = () => {
   
     return null;
   }, [userLocation, environmentalData, parks]);
-  
-  const findBiggestPark = (parcel, parks) => {
-    if (!parks) return null;
-  
-    const parksInParcel = parks.features.filter(park => 
-      booleanPointInPolygon(center(park), parcel)
-    );
-  
-    if (parksInParcel.length > 0) {
-      return parksInParcel.reduce((biggest, current) => 
-        (current.properties.acres > biggest.properties.acres) ? current : biggest
-      );
-    }
-  
-    return null;
-  };
-
-  const findBestParkAcrossParcels = useCallback(() => {
-    if (!userLocation || !environmentalData || !parks) return null;
-  
-    const userPoint = point(userLocation);
-    const buffer2Miles = buffer(userPoint, 2, { units: 'miles' });
-  
-    const parcelsInRange = environmentalData.features
-      .filter(feature => booleanPointInPolygon(center(feature), buffer2Miles))
-      .sort((a, b) => b.properties.percentile - a.properties.percentile);
-  
-    for (const parcel of parcelsInRange) {
-      const bestParkInParcel = findBiggestPark(parcel, parks);
-      if (bestParkInParcel) {
-        return {
-          park: bestParkInParcel,
-          environmentalRating: parcel.properties.percentile
-        };
-      }
-    }
-  
-    return null;
-  }, [userLocation, environmentalData, parks]);  
-    
-  const getCoordinates = useCallback((feature) => {
-    if (feature.geometry.type === 'LineString') {
-      return feature.geometry.coordinates;
-    } else if (feature.geometry.type === 'MultiLineString') {
-      return feature.geometry.coordinates.flat();
-    } else {
-      console.error('Unexpected geometry type:', feature.geometry.type);
-      return [];
-    }
-  }, []);
 
   const findNearestTrail = useCallback((start, end) => {
     if (!bikePathsContent || !bikePathsContent.features) return null;
@@ -606,38 +337,6 @@ const MapComponent = () => {
     }
   }, []);
 
-  const findBestParkInParcel = (parcel, parks) => {
-    if (!parks) return null;
-  
-    const parksInParcel = parks.features.filter(park => 
-      booleanPointInPolygon(center(park), parcel)
-    );
-  
-    if (parksInParcel.length > 0) {
-      return parksInParcel.reduce((biggest, current) => 
-        (current.properties.acres > biggest.properties.acres) ? current : biggest
-      );
-    }
-  
-    return null;
-  };
-  
-  const findBestEnvironmentalParcelWithPark = (userLocation, environmentalData, parks) => {
-    if (!userLocation || !environmentalData || !parks) return null;
-  
-    const sortedParcels = environmentalData.features.sort((a, b) => 
-      b.properties.percentile - a.properties.percentile
-    );
-  
-    for (const parcel of sortedParcels) {
-      const bestPark = findBestParkInParcel(parcel, parks);
-      if (bestPark) {
-        return { parcel, park: bestPark };
-      }
-    }
-  
-    return null;
-  };  
   const findBiggestParkOrTrail = useCallback((parcel) => {
     if (!parks || !bikePaths) return null;
 
@@ -686,6 +385,11 @@ const MapComponent = () => {
           guide: guide,
         });
 
+        // Set the selected park ID
+        if (bestLocation.properties.OBJECTID) {
+          setSelectedParkId(bestLocation.properties.OBJECTID);
+        }
+
         // Pan to the recommended location
         const [longitude, latitude] = center(bestLocation).geometry.coordinates;
         if (map) {
@@ -697,7 +401,7 @@ const MapComponent = () => {
         }
       }
     }
-  }, [findBestEnvironmentalParcel, generateParkGuide, userLocation, bikePathsContent, findNearestTrail, highlightTrail, map]);
+  }, [findBestEnvironmentalParcel, generateParkGuide, userLocation, bikePathsContent, findNearestTrail, highlightTrail, map, findBiggestParkOrTrail]);
 
   const environmentalDataLayer = {
     id: 'environmental-data',
@@ -717,15 +421,6 @@ const MapComponent = () => {
     }
   };
 
-  const accessPolygonsLayer = {
-    id: 'access-polygons',
-    type: 'fill',
-    paint: {
-      'fill-color': ['get', 'color'],
-      'fill-opacity': 0.5
-    }
-  };
-
   const bikePathsLayer = {
     id: 'bike-paths',
     type: 'line',
@@ -742,7 +437,12 @@ const MapComponent = () => {
     id: 'parks',
     type: 'fill',
     paint: {
-      'fill-color': 'darkgreen',
+      'fill-color': [
+        'case',
+        ['==', ['get', 'OBJECTID'], ['to-number', selectedParkId]],
+        'red',
+        'darkgreen'
+      ],
       'fill-opacity': 0.7,
       'fill-outline-color': 'limegreen',
       'fill-outline-width': 2
@@ -759,19 +459,6 @@ const MapComponent = () => {
     }
   };
 
-  const handleParkClick = useCallback((event) => {
-    const feature = event.features[0];
-    if (feature) {
-      const [minLng, minLat, maxLng, maxLat] = bbox(feature);
-      const centerLng = (minLng + maxLng) / 2;
-      const centerLat = (minLat + maxLat) / 2;
-      setSelectedPark({
-        ...feature,
-        center: [centerLng, centerLat]
-      });
-    }
-  }, []);
-
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
       <Map
@@ -781,109 +468,33 @@ const MapComponent = () => {
         mapboxAccessToken={MAPBOX_TOKEN}
         onMove={(evt) => setViewport(evt.viewState)}
         interactiveLayerIds={['parks']}
-        onClick={handleParkClick}
       >
-        {environmentalData && layerVisibility.environmental && (
+        {environmentalData && (
           <Source type="geojson" data={environmentalData}>
             <Layer {...environmentalDataLayer} />
           </Source>
         )}
-        {accessPolygons && layerVisibility.healthcare && (
-          <Source type="geojson" data={accessPolygons}>
-            <Layer {...accessPolygonsLayer} />
-          </Source>
-        )}
-        {healthcareFacilities && layerVisibility.healthcare && (
-          healthcareFacilities.features.map((facility, index) => (
-            <Marker
-              key={index}
-              longitude={facility.geometry.coordinates[0]}
-              latitude={facility.geometry.coordinates[1]}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M3 21h18v-2H3v2zm0-4h18v-2H3v2zm0-4h18v-2H3v2zm0-4h18V7H3v2zm0-6v2h18V3H3z" fill="#1e90ff"/>
-              </svg>
-            </Marker>
-          ))
-        )}
-        {bikePaths && layerVisibility.bikePaths && (
+        {bikePaths && (
           <Source type="geojson" data={bikePaths}>
             <Layer {...bikePathsLayer} />
           </Source>
         )}
-        {parks && layerVisibility.bikePaths && (
+        {parks && (
           <Source type="geojson" data={parks}>
             <Layer {...parksLayer} />
           </Source>
-        )}
-        {selectedPark && (
-          <Popup
-            longitude={selectedPark.center[0]}
-            latitude={selectedPark.center[1]}
-            onClose={() => setSelectedPark(null)}
-            closeButton={true}
-            closeOnClick={false}
-          >
-            <ParkPopup park={selectedPark} onClose={() => setSelectedPark(null)} />
-          </Popup>
         )}
         {userLocation && (
           <Marker longitude={userLocation[0]} latitude={userLocation[1]}>
             <div style={{ color: 'red', fontSize: '24px' }}>📍</div>
           </Marker>
         )}
-
-{healthyPlan && (
-          <Popup
-            longitude={center(healthyPlan.location).geometry.coordinates[0]}
-            latitude={center(healthyPlan.location).geometry.coordinates[1]}
-            onClose={() => setHealthyPlan(null)}
-            closeButton={true}
-            closeOnClick={false}
-            maxWidth="800px"
-          >
-            <div style={{ width: '600px', maxHeight: '700px', overflowY: 'auto' }}>
-              <h3>Your Healthy Plan</h3>
-              <p><strong>Type:</strong> {healthyPlan.type}</p>
-              <p><strong>Environmental Rating:</strong> {(healthyPlan.environmentalRating * 100).toFixed(2)}%</p>
-              {healthyPlan.guide && (
-                <div>
-                  <h4>Park Guide</h4>
-                  <p>{healthyPlan.guide}</p>
-                </div>
-              )}
-              {healthyPlan.type === 'Park' && (
-                <div>
-                  <h4>Park Details</h4>
-                  <p><strong>Name:</strong> {healthyPlan.location.properties.full_name || healthyPlan.location.properties.common_name}</p>
-                  <p><strong>Address:</strong> {healthyPlan.location.properties.address_lo}</p>
-                  <p><strong>Size:</strong> {healthyPlan.location.properties.acres.toFixed(2)} acres</p>
-                  <p>
-                    <strong>Directions: </strong>
-                    <a 
-                      href={`https://www.google.com/maps/search/?api=1&query=${center(healthyPlan.location).geometry.coordinates[1]},${center(healthyPlan.location).geometry.coordinates[0]}`} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                    >
-                      Click here for directions
-                    </a>
-                  </p>
-                </div>
-              )}
-              {healthyPlan.type === 'Trail' && (
-                <p><strong>Trail Name:</strong> {healthyPlan.location.properties.name || 'Unnamed Trail'}</p>
-              )}
-              {highlightedTrail && (
-                <Source type="geojson" data={highlightedTrail}>
-                  <Layer {...highlightedTrailLayer} />
-                </Source>
-              )}
-
-            </div>
-          </Popup>
+        {highlightedTrail && (
+          <Source type="geojson" data={highlightedTrail}>
+            <Layer {...highlightedTrailLayer} />
+          </Source>
         )}
       </Map>
-      <Legend layerVisibility={layerVisibility} toggleLayer={toggleLayer} />
       <button
         style={{
           position: 'absolute',
@@ -901,8 +512,56 @@ const MapComponent = () => {
       >
         Build me a healthy plan
       </button>
+      {healthyPlan && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '20px',
+            right: '20px',
+            width: '300px',
+            maxHeight: '80vh',
+            overflowY: 'auto',
+            backgroundColor: 'white',
+            padding: '15px',
+            borderRadius: '5px',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.3)'
+          }}
+        >
+          <h3>Your Healthy Plan</h3>
+          <p><strong>Type:</strong> {healthyPlan.type}</p>
+          <p><strong>Environmental Rating:</strong> {(healthyPlan.environmentalRating * 100).toFixed(2)}%</p>
+          {healthyPlan.guide && (
+            <div>
+              <h4>Park Guide</h4>
+              <p>{healthyPlan.guide}</p>
+            </div>
+          )}
+          {healthyPlan.type === 'Park' && (
+            <div>
+              <h4>Park Details</h4>
+              <p><strong>Name:</strong> {healthyPlan.location.properties.full_name || healthyPlan.location.properties.common_name}</p>
+              <p><strong>Address:</strong> {healthyPlan.location.properties.address_lo}</p>
+              <p><strong>Size:</strong> {healthyPlan.location.properties.acres.toFixed(2)} acres</p>
+              <p>
+                <strong>Directions: </strong>
+                <a 
+                  href={`https://www.google.com/maps/search/?api=1&query=${center(healthyPlan.location).geometry.coordinates[1]},${center(healthyPlan.location).geometry.coordinates[0]}`} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                >
+                  Click here for directions
+                </a>
+              </p>
+            </div>
+          )}
+          {healthyPlan.type === 'Trail' && (
+            <p><strong>Trail Name:</strong> {healthyPlan.location.properties.name || 'Unnamed Trail'}</p>
+          )}
+        </div>
+      )}
     </div>
   );
 };
+
 
 export default MapComponent;
