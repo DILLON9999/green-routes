@@ -4,6 +4,7 @@ import axios from 'axios';
 import { center, point, buffer, booleanPointInPolygon } from '@turf/turf';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import bikePathsData from './geo_data/bike_routes_datasd.geojson';
+import ReactMarkdown from 'react-markdown';
 
 const SD_BOUNDS = [-117.6, 32.5, -116.1, 33.5]; // [west, south, east, north]
 const CHATGPT_API_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
@@ -59,8 +60,9 @@ const MapComponent = () => {
     Highlight its main features and why someone might want to visit.
     This guide is being used to give users an easy, healthy outside plan.
     Give suggestions about what they can do in the form of a short list, 3-4 bullet points.
-    Please include what the park has to offer, its location, and any interesting features.
-    Do not use markdown, write it in plain text. Separate points in the list using spaces built into the response`;
+    Format the response using Markdown, including bold text for emphasis and bullet points for listing features. The title should be H3
+
+`;
 
     try {
       const response = await axios.post(
@@ -578,9 +580,10 @@ const MapComponent = () => {
           {healthyPlan.guide && (
             <div>
               <h4>Park Guide</h4>
-              <p>{healthyPlan.guide}</p>
+              <ReactMarkdown>{healthyPlan.guide}</ReactMarkdown>
             </div>
           )}
+
           {healthyPlan.type === 'Park' && (
             <div>
               <h4>Park Details</h4>
